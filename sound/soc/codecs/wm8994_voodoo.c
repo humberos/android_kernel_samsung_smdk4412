@@ -126,7 +126,7 @@ static struct snd_soc_codec *codec;
 #define PLAYBACK_ACTIVE		0x01
 #define CAPTURE_ACTIVE		0x02
 
-#if defined(CONFIG_SND_SOC_SAMSUNG_T0_WM1811) || defined(CONFIG_SND_SOC_SAMSUNG_M3_WM1811)
+#if defined(CONFIG_SND_SOC_SAMSUNG_T0_WM1811) || defined(CONFIG_SND_SOC_SAMSUNG_M3_WM1811) || defined(CONFIG_SND_SOC_SAMSUNG_LUNGO_WM1811)
 #define CALL_ACTIVE		0
 #else
 #define CALL_ACTIVE		0x04
