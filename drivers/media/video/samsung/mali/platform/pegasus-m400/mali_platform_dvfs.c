@@ -223,7 +223,7 @@ static unsigned int asv_3d_volt_9_table_for_prime[MALI_DVFS_STEPS][ASV_LEVEL] = 
 mali_dvfs_currentstatus maliDvfsStatus;
 int mali_dvfs_control=0;
 
-u32 mali_dvfs_utilization = 255;
+static u32 mali_dvfs_utilization = 255;
 
 static void mali_dvfs_work_handler(struct work_struct *w);
 
@@ -348,8 +348,8 @@ static mali_bool set_mali_dvfs_status(u32 step,mali_bool boostup)
 
 #if CPUFREQ_LOCK_DURING_440
 	/* lock/unlock CPU freq by Mali */
-	if (mali_dvfs[step].clock >= 440)
-		err = cpufreq_lock_by_mali(1400);
+	if (mali_dvfs[step].clock == 440)
+		err = cpufreq_lock_by_mali(1200);
 	else
 		cpufreq_unlock_by_mali();
 #endif
@@ -423,17 +423,14 @@ static mali_bool mali_dvfs_table_update(void)
 }
 #endif
 
-extern int mali_gpu_clk;
-
 static unsigned int decideNextStatus(unsigned int utilization)
 {
 	static unsigned int level = 0; // 0:stay, 1:up
 	static int mali_dvfs_clk = 0;
-	int i = 0;
 
 	if (mali_runtime_resumed >= 0) {
+		level = mali_runtime_resumed;
 		mali_runtime_resumed = -1;
-		return level;
 	}
 
 	if (mali_dvfs_threshold[maliDvfsStatus.currentStep].upthreshold
@@ -774,8 +771,8 @@ int change_dvfs_tableset(int change_clk, int change_step)
 
 #if CPUFREQ_LOCK_DURING_440
 		/* lock/unlock CPU freq by Mali */
-		if (mali_dvfs[change_step].clock >= 440)
-			err = cpufreq_lock_by_mali(1400);
+		if (mali_dvfs[change_step].clock == 440)
+			err = cpufreq_lock_by_mali(1200);
 		else
 			cpufreq_unlock_by_mali();
 #endif
