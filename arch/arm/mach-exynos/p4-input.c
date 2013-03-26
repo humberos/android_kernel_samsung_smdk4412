@@ -360,7 +360,7 @@ static u8 t8_config_s[] = { GEN_ACQUISITIONCONFIG_T8,
 };
 
 static u8 t9_config_s[] = { TOUCH_MULTITOUCHSCREEN_T9,
-	0x83, 0, 0, P4_NOTE_X_NUM, P4_NOTE_Y_NUM,
+	0x8B, 0, 0, P4_NOTE_X_NUM, P4_NOTE_Y_NUM,
 	0, MXT1664S_BLEN_BATT, MXT1664S_THRESHOLD_BATT, 1, 1,
 	10, 15, 1, 65, MXT1664S_MAX_MT_FINGERS, 20, 30, 20, 255, 15,
 	255, 15, 5, 246, 5, 5, 0, 0, 0, 0,
@@ -549,7 +549,9 @@ static void switch_config(u32 rev)
 
 		t8_config_s[1] = 1;
 
+		t9_config_s[7] = 116;
 		t9_config_s[8] = 55;
+		t9_config_s[14] = 50;
 		t9_config_s[27] = 64;
 
 		t40_config_s[4] = 2;
@@ -586,8 +588,9 @@ static void switch_config(u32 rev)
 		t62_config_s[20] = 136;
 		t62_config_s[22] = 35;
 		t62_config_s[35] = 80;
-		t62_config_s[36] = 50;
+		t62_config_s[36] = 40;
 		t62_config_s[38] = 5;
+		t62_config_s[40] = 50;
 		t62_config_s[42] = 30;
 		t62_config_s[43] = 40;
 		t62_config_s[44] = 10;

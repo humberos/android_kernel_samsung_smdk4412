@@ -4327,7 +4327,7 @@ static u8 t8_config_e[] = { GEN_ACQUISITIONCONFIG_T8,
 };
 
 static u8 t9_config_e[] = { TOUCH_MULTITOUCHSCREEN_T9,
-	139, 0, 0, 24, 32, 0, 176, MXT768E_THRESHOLD_BATT, 2, 1,
+	139, 0, 0, 24, 32, 0, 176, MXT768E_THRESHOLD_BATT, 2, 2,
 	10, 10, 1, 13, MXT768E_MAX_MT_FINGERS, 20, 40, 20, 31, 3,
 	255, 4, MXT768E_XLOCLIP_BATT, MXT768E_XHICLIP_BATT,
 	MXT768E_YLOCLIP_BATT, MXT768E_YHICLIP_BATT,
@@ -4444,9 +4444,9 @@ static struct mxt_platform_data mxt_data = {
 	.gpio_read_done = GPIO_TSP_INT_18V,
 	.config = mxt768e_config,
 	.min_x = 0,
-	.max_x = 1279,
+	.max_x = 799,
 	.min_y = 0,
-	.max_y = 799,
+	.max_y = 1279,
 	.min_z = 0,
 	.max_z = 255,
 	.min_w = 0,
@@ -6414,6 +6414,7 @@ if (system_rev >= 4)
 		acc_en_token |= (1 << token);
 		enable = true;
 		gpio_direction_output(gpio_acc_en, 1);
+		usleep_range(2000, 2000);
 
 		if (0 != gpio_acc_5v) {
 			gpio_request(gpio_acc_5v, "gpio_acc_5v");
