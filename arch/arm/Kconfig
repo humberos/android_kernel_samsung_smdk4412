@@ -1265,6 +1265,24 @@ config ARM_ERRATA_761320
 	help
 	  This option enables the workaround for the 761320 Cortex-A9 erratum.
 
+config ARM_ERRATA_761171
+	bool "ARM errata: disable store streaming of mode 3"
+	depends on CPU_V7 && SMP
+	help
+	  This option enables the workaround for the 761171 Cortex-A15 erratum.
+
+config ARM_ERRATA_762974
+	bool "ARM errata: disable l2 prefetch"
+	depends on CPU_V7 && SMP
+	help
+	  This option enables the workaround for the 762964 Cortex-A15 erratum.
+
+config ARM_ERRATA_763722
+	bool "ARM errata: disable store streaming of mode 2 and mode 3"
+	depends on CPU_V7 && SMP
+	help
+	  This option enables the workaround for the 763722 Cortex-A15 erratum.
+
 config ARM_ERRATA_764369
 	bool "ARM errata: Data cache line maintenance operation by MVA may not succeed"
 	depends on CPU_V7 && SMP

@@ -18,7 +18,6 @@
 #include <linux/bio.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/version.h>
 
 enum { ASYNC, SYNC };
@@ -391,7 +390,11 @@ static void __exit sio_exit(void)
 	elv_unregister(&iosched_sio);
 }
 
+#ifdef CONFIG_FAST_RESUME
+beforeresume_initcall(sio_init);
+#else
 module_init(sio_init);
+#endif
 module_exit(sio_exit);
 
 MODULE_AUTHOR("Miguel Boton");

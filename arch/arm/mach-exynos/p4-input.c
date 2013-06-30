@@ -599,7 +599,9 @@ static void switch_config(u32 rev)
 		t62_config_s[35] = 80;
 		t62_config_s[36] = 40;
 		t62_config_s[38] = 5;
+#if defined(CONFIG_MACH_P4NOTELTE_USA_VZW)
 		t62_config_s[40] = 50;
+#endif
 		t62_config_s[42] = 30;
 		t62_config_s[43] = 40;
 		t62_config_s[44] = 10;

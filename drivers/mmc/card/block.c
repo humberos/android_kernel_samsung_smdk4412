@@ -60,6 +60,9 @@ MODULE_ALIAS("mmc:block");
 #define MMC_IOCTL_GET_SECTOR_COUNT	_IOR(MMC_IOCTL_BASE, 100, int)
 #define MMC_IOCTL_GET_SECTOR_SIZE		_IOR(MMC_IOCTL_BASE, 101, int)
 #define MMC_IOCTL_GET_BLOCK_SIZE		_IOR(MMC_IOCTL_BASE, 102, int)
+#define MMC_IOCTL_SET_RETRY_AKE_PROCESS		_IOR(MMC_IOCTL_BASE, 104, int)
+
+static int cprm_ake_retry_flag;
 #endif
 
 #ifdef MOVI_DEBUG
@@ -520,6 +523,8 @@ static int mmc_blk_ioctl(struct block_device *bdev, fmode_t mode,
 #ifdef MMC_ENABLE_CPRM
 	struct mmc_blk_data *md = bdev->bd_disk->private_data;
 	struct mmc_card *card = md->queue.card;
+	static int i;
+	static unsigned long temp_arg[16] = {0};
 #endif
 	int ret = -EINVAL;
 	if (cmd == MMC_IOC_CMD)
@@ -529,6 +534,10 @@ static int mmc_blk_ioctl(struct block_device *bdev, fmode_t mode,
 	printk(KERN_DEBUG " %s ], %x ", __func__, cmd);
 
 	switch (cmd) {
+	case MMC_IOCTL_SET_RETRY_AKE_PROCESS:
+		cprm_ake_retry_flag = 1;
+		ret = 0;
+		break;
 	case MMC_IOCTL_GET_SECTOR_COUNT: {
 		int size = 0;
 
@@ -551,9 +560,54 @@ static int mmc_blk_ioctl(struct block_device *bdev, fmode_t mode,
 		struct cprm_request *req = (struct cprm_request *)arg;
 
 		printk(KERN_DEBUG "[%s]: cmd [%x]\n", __func__, cmd);
+			if (cmd == ACMD43) {
+				printk(KERN_DEBUG"storing acmd43 arg[%d] = %ul\n"
+									, i, (unsigned int)req->arg);
+				temp_arg[i] = req->arg;
+				i++;
+				if(i >= 16){
+					printk(KERN_DEBUG"reset acmd43 i = %d\n",
+						i);
+					i = 0;
+				}
+			}
+
+			
+			if (cmd == ACMD45 && cprm_ake_retry_flag == 1) {
+				cprm_ake_retry_flag = 0;
+				printk(KERN_DEBUG"ACMD45.. I'll call ACMD43 and ACMD44 first\n");
+
+				for (i = 0; i < 16; i++) {
+					printk(KERN_DEBUG"calling ACMD43 with arg[%d] = %ul\n",
+										i, (unsigned int)temp_arg[i]);
+					if (stub_sendcmd(card,
+						ACMD43, temp_arg[i],
+						 512, NULL) < 0) {
+
+						printk(KERN_DEBUG"error ACMD43 %d\n", i);
+						return -EINVAL;
+					}
+				}
+
+
+				printk(KERN_DEBUG"calling ACMD44\n");
+				if (stub_sendcmd(card, ACMD44, 0, 8, NULL) < 0)
+				{
+
+					printk(KERN_DEBUG"error in ACMD44 %d\n",
+						i);
+					return -EINVAL;
+				}
+				
+			}
 		return stub_sendcmd(card, req->cmd, req->arg, \
 				req->len, req->buff);
 		}
+		break;
+
+	default:
+		printk(KERN_DEBUG"%s: Invalid ioctl command\n", __func__);
+		break;
 	}
 #endif
 	return ret;
@@ -1112,12 +1166,14 @@ static int mmc_blk_err_check(struct mmc_card *card,
 	if ((!mmc_host_is_spi(card->host) && rq_data_dir(req) != READ) ||
 			(mq_mrq->packed_cmd == MMC_PACKED_WR_HDR)) {
 		u32 status;
+#ifndef CONFIG_WIMAX_CMC
 		/* timeout value set 0x30000 : It works just SDcard case.
 		 * It means send CMD sequencially about 7.8sec.
 		 * If SDcard's data line stays low, timeout is about 4sec.
 		 * max timeout is up to 300ms
 		 */
 		u32 timeout = 0x30000;
+#endif
 		do {
 			int err = get_card_status(card, &status, 5);
 			if (err) {
@@ -1130,6 +1186,10 @@ static int mmc_blk_err_check(struct mmc_card *card,
 			 * so make sure to check both the busy
 			 * indication and the card state.
 			 */
+#ifdef CONFIG_WIMAX_CMC
+		} while (!(status & R1_READY_FOR_DATA) ||
+			 (R1_CURRENT_STATE(status) == R1_STATE_PRG));
+#else
 			/* Just SDcard case, decrease timeout */
 			if (mmc_card_sd(card))
 				timeout--;
@@ -1144,6 +1204,7 @@ static int mmc_blk_err_check(struct mmc_card *card,
 					req->rq_disk->disk_name);
 			return MMC_BLK_DATA_ERR;
 		}
+#endif
 	}
 
 	if (brq->data.error) {
@@ -1480,6 +1541,88 @@ no_packed:
 	return 0;
 }
 
+#ifdef CONFIG_WIMAX_CMC
+static void mmc_blk_packed_hdr_wrq_prep(struct mmc_queue_req *mqrq,
+			       struct mmc_card *card,
+			       struct mmc_queue *mq,
+			       u8 reqs)
+{
+	struct mmc_blk_request *brq = &mqrq->brq;
+	struct request *req = mqrq->req;
+	struct request *prq;
+	struct mmc_blk_data *md = mq->data;
+	bool do_rel_wr;
+	u32 *packed_cmd_hdr = mqrq->packed_cmd_hdr;
+	u8 i = 1;
+
+	mqrq->packed_cmd = (rq_data_dir(req) == READ) ?
+		MMC_PACKED_WR_HDR : MMC_PACKED_WRITE;
+	mqrq->packed_blocks = 0;
+	mqrq->packed_fail_idx = -1;
+
+	memset(packed_cmd_hdr, 0, sizeof(mqrq->packed_cmd_hdr));
+	packed_cmd_hdr[0] = (reqs << 16) |
+		(((rq_data_dir(req) == READ) ?
+		  PACKED_CMD_RD : PACKED_CMD_WR) << 8) |
+		PACKED_CMD_VER;
+
+
+	/*
+	 * Argument for each entry of packed group
+	 */
+	list_for_each_entry(prq, &mqrq->packed_list, queuelist) {
+		do_rel_wr = mmc_req_rel_wr(prq) && (md->flags & MMC_BLK_REL_WR);
+		/* Argument of CMD23*/
+		packed_cmd_hdr[(i * 2)] = (do_rel_wr ? MMC_CMD23_ARG_REL_WR : 0) |
+			blk_rq_sectors(prq);
+		/* Argument of CMD18 or CMD25 */
+		packed_cmd_hdr[((i * 2)) + 1] = mmc_card_blockaddr(card) ?
+			blk_rq_pos(prq) : blk_rq_pos(prq) << 9;
+		mqrq->packed_blocks += blk_rq_sectors(prq);
+		i++;
+	}
+
+	memset(brq, 0, sizeof(struct mmc_blk_request));
+	brq->mrq.cmd = &brq->cmd;
+	brq->mrq.data = &brq->data;
+	brq->mrq.sbc = &brq->sbc;
+	brq->mrq.stop = &brq->stop;
+
+	brq->sbc.opcode = MMC_SET_BLOCK_COUNT;
+	brq->sbc.arg = MMC_CMD23_ARG_PACKED |
+		((rq_data_dir(req) == READ) ? 1 : mqrq->packed_blocks + 1);
+	brq->sbc.flags = MMC_RSP_R1 | MMC_CMD_AC;
+
+	brq->cmd.opcode = MMC_WRITE_MULTIPLE_BLOCK;
+	brq->cmd.arg = blk_rq_pos(req);
+	if (!mmc_card_blockaddr(card))
+		brq->cmd.arg <<= 9;
+	brq->cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_ADTC;
+
+	brq->data.blksz = 512;
+	/*
+	 * Write separately the packd command header only for packed read.
+	 * In case of packed write, header is sent with blocks of data.
+	 */
+	brq->data.blocks = (rq_data_dir(req) == READ) ?
+		1 : mqrq->packed_blocks + 1;
+	brq->data.flags |= MMC_DATA_WRITE;
+
+	brq->stop.opcode = MMC_STOP_TRANSMISSION;
+	brq->stop.arg = 0;
+	brq->stop.flags = MMC_RSP_SPI_R1B | MMC_RSP_R1B | MMC_CMD_AC;
+
+	mmc_set_data_timeout(&brq->data, card);
+
+	brq->data.sg = mqrq->sg;
+	brq->data.sg_len = mmc_queue_map_sg(mq, mqrq);
+
+	mqrq->mmc_active.mrq = &brq->mrq;
+	mqrq->mmc_active.err_check = mmc_blk_packed_err_check;
+
+	mmc_queue_bounce_pre(mqrq);
+}
+#else
 static void mmc_blk_packed_hdr_wrq_prep(struct mmc_queue_req *mqrq,
 			       struct mmc_card *card,
 			       struct mmc_queue *mq)
@@ -1558,7 +1701,7 @@ static void mmc_blk_packed_hdr_wrq_prep(struct mmc_queue_req *mqrq,
 
 	mmc_queue_bounce_pre(mqrq);
 }
-
+#endif
 static void mmc_blk_packed_rrq_prep(struct mmc_queue_req *mqrq,
 			       struct mmc_card *card,
 			       struct mmc_queue *mq)
@@ -1668,7 +1811,11 @@ static int mmc_blk_issue_packed_rd(struct mmc_queue *mq,
 			ret = mmc_blk_chk_hdr_err(mq, status);
 			if (ret)
 				break;
+#ifdef CONFIG_WIMAX_CMC
+			mmc_blk_packed_hdr_wrq_prep(mq_rq, card, mq, mq_rq->packed_num);
+#else
 			mmc_blk_packed_hdr_wrq_prep(mq_rq, card, mq);
+#endif
 			mmc_start_req(card->host, &mq_rq->mmc_active, NULL);
 		} else {
 			mmc_blk_packed_rrq_prep(mq_rq, card, mq);
@@ -1708,9 +1855,14 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 		struct mmc_command cmd;
 #endif
 		if (rqc) {
+#ifdef CONFIG_WIMAX_CMC
+			if (reqs >= 2)
+				mmc_blk_packed_hdr_wrq_prep(mq->mqrq_cur, card, mq, reqs);
+#else
 			if (reqs >= packed_num) {
 				mmc_blk_packed_hdr_wrq_prep(mq->mqrq_cur, card, mq);
 			}
+#endif
 			else
 				mmc_blk_rw_rq_prep(mq->mqrq_cur, card, 0, mq);
 			areq = &mq->mqrq_cur->mmc_active;
@@ -1866,22 +2018,36 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 					if (idx == i) {
 						/* retry from error index */
 						mq_rq->packed_num -= idx;
+#ifdef CONFIG_WIMAX_CMC
+						if (mq_rq->packed_num == 1) {
+						printk(KERN_ERR "SBRISSEN - I AM HERE\n");
+							mq_rq->packed_cmd = MMC_PACKED_NONE;
+							mq_rq->packed_num = 0;
+						}
+#endif
 						mq_rq->req = prq;
 						ret = 1;
 						break;
 					}
+#ifndef CONFIG_WIMAX_CMC
 					list_del_init(&prq->queuelist);
+#endif
 					spin_lock_irq(&md->lock);
 					__blk_end_request(prq, 0, blk_rq_bytes(prq));
 					spin_unlock_irq(&md->lock);
 					i++;
 				}
+#ifdef CONFIG_WIMAX_CMC
+				if (idx == -1)
+					mq_rq->packed_num = 0;
+#else
 				if (mq_rq->packed_num == MMC_PACKED_N_SINGLE) {
 					prq = list_entry_rq(mq_rq->packed_list.next);
 					list_del_init(&prq->queuelist);
 					mq_rq->packed_cmd = MMC_PACKED_NONE;
 					mq_rq->packed_num = MMC_PACKED_N_ZERO;
 				}
+#endif
 				break;
 			} else {
 				spin_lock_irq(&md->lock);
@@ -1961,7 +2127,11 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 				mmc_blk_rw_rq_prep(mq_rq, card, disable_multi, mq);
 				mmc_start_req(card->host, &mq_rq->mmc_active, NULL);
 			} else {
+#ifdef CONFIG_WIMAX_CMC
+				mmc_blk_packed_hdr_wrq_prep(mq_rq, card, mq, mq_rq->packed_num);
+#else
 				mmc_blk_packed_hdr_wrq_prep(mq_rq, card, mq);
+#endif
 				mmc_start_req(card->host, &mq_rq->mmc_active, NULL);
 				if (mq_rq->packed_cmd == MMC_PACKED_WR_HDR) {
 					if (mmc_blk_issue_packed_rd(mq, mq_rq))
@@ -2424,9 +2594,10 @@ static int mmc_blk_probe(struct mmc_card *card)
 	printk(KERN_INFO "%s: %s %s %s %s\n",
 		md->disk->disk_name, mmc_card_id(card), mmc_card_name(card),
 		cap_str, md->read_only ? "(ro)" : "");
-
+#ifdef CONFIG_WIMAX_CMC
 	if (mmc_blk_alloc_parts(card, md))
-	goto out;
+		goto out;
+#endif
 
 	mmc_set_drvdata(card, md);
 	mmc_fixup_device(card, blk_fixups);
